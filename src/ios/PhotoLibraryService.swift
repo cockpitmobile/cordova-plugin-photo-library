@@ -305,7 +305,7 @@ final class PhotoLibraryService {
 
             if(mediaType == "image") {
                 PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                    (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                    (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                     if(imageData == nil) {
                         completion(nil, libraryItem)
@@ -447,7 +447,7 @@ final class PhotoLibraryService {
             let asset = obj as! PHAsset
 
             PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                 guard let image = imageData != nil ? UIImage(data: imageData!) : nil else {
                     completion(nil)
@@ -479,7 +479,7 @@ final class PhotoLibraryService {
 
             if(mediaType == "image") {
                 PHImageManager.default().requestImageData(for: asset, options: self.imageRequestOptions) {
-                    (imageData: Data?, dataUTI: String?, orientation: UIImageOrientation, info: [AnyHashable: Any]?) in
+                    (imageData: Data?, dataUTI: String?, orientation: UIImage.Orientation, info: [AnyHashable: Any]?) in
 
                     if(imageData == nil) {
                         completion(nil)
@@ -584,7 +584,7 @@ final class PhotoLibraryService {
         }
 
         // Permission was manually denied by user, open settings screen
-        let settingsUrl = URL(string: UIApplicationOpenSettingsURLString)
+        let settingsUrl = URL(string: UIApplication.openSettingsURLString)
         if let url = settingsUrl {
             UIApplication.shared.openURL(url)
             // TODO: run callback only when return ?
@@ -608,38 +608,68 @@ final class PhotoLibraryService {
             completion(nil, "\(error)")
             return
         }
-
-        let assetsLibrary = ALAssetsLibrary()
+        
+        func fetchAssets(_ photoId: String) {
+            let fetchResult = PHAsset.fetchAssets(withLocalIdentifiers: [photoId], options: nil)
+            var libraryItem: NSDictionary? = nil
+            if fetchResult.count == 1 {
+                let asset = fetchResult.firstObject
+                if let asset = asset {
+                    libraryItem = self.assetToLibraryItem(asset: asset, useOriginalFileNames: false, includeAlbumData: true)
+                }
+            }
+            completion(libraryItem, nil)
+        }
 
         func saveImage(_ photoAlbum: PHAssetCollection) {
-            assetsLibrary.writeImageData(toSavedPhotosAlbum: sourceData, metadata: nil) { (assetUrl: URL?, error: Error?) in
+            if #available(iOS 9.0, *) {
+                var localId: String = String()
 
-                if error != nil {
-                    completion(nil, "Could not write image to album: \(error)")
-                    return
-                }
-
-                guard let assetUrl = assetUrl else {
-                    completion(nil, "Writing image to album resulted empty asset")
-                    return
-                }
-
-                self.putMediaToAlbum(assetsLibrary, url: assetUrl, album: album, completion: { (error) in
-                    if error != nil {
-                        completion(nil, error)
+                PHPhotoLibrary.shared().performChanges({
+                    let image = UIImage(data : sourceData)
+                    let assetRequest = PHAssetChangeRequest.creationRequestForAsset(from: image!)
+                    let albumChangeRequest = PHAssetCollectionChangeRequest(for: photoAlbum)
+                    let placeHolder = assetRequest.placeholderForCreatedAsset
+                    albumChangeRequest?.addAssets([placeHolder!] as NSArray)
+                    localId = placeHolder!.localIdentifier;
+                }) { (isSuccess, error) in
+                    if isSuccess {
+                        fetchAssets(localId)
                     } else {
-                        let fetchResult = PHAsset.fetchAssets(withALAssetURLs: [assetUrl], options: nil)
-                        var libraryItem: NSDictionary? = nil
-                        if fetchResult.count == 1 {
-                            let asset = fetchResult.firstObject
-                            if let asset = asset {
-                                libraryItem = self.assetToLibraryItem(asset: asset, useOriginalFileNames: false, includeAlbumData: true)
-                            }
-                        }
-                        completion(libraryItem, nil)
+                        completion(nil,"Could not write video to album: \(String(describing: error))")
                     }
-                })
+                }
+            } else {
+                let assetsLibrary = ALAssetsLibrary()
 
+                assetsLibrary.writeImageData(toSavedPhotosAlbum: sourceData, metadata: nil) { (assetUrl: URL?, error: Error?) in
+
+                    if error != nil {
+                        completion(nil, "Could not write image to album: \(error)")
+                        return
+                    }
+
+                    guard let assetUrl = assetUrl else {
+                        completion(nil, "Writing image to album resulted empty asset")
+                        return
+                    }
+
+                    self.putMediaToAlbum(assetsLibrary, url: assetUrl, album: album, completion: { (error) in
+                        if error != nil {
+                            completion(nil, error)
+                        } else {
+                            let fetchResult = PHAsset.fetchAssets(withALAssetURLs: [assetUrl], options: nil)
+                            var libraryItem: NSDictionary? = nil
+                            if fetchResult.count == 1 {
+                                let asset = fetchResult.firstObject
+                                if let asset = asset {
+                                    libraryItem = self.assetToLibraryItem(asset: asset, useOriginalFileNames: false, includeAlbumData: true)
+                                }
+                            }
+                            completion(libraryItem, nil)
+                        }
+                    })
+                }
             }
         }
 
@@ -820,10 +850,10 @@ final class PhotoLibraryService {
         var mimeType: String?
 
         if (imageHasAlpha(image)){
-            data = UIImagePNGRepresentation(image)
+            data = image.pngData()
             mimeType = data != nil ? "image/png" : nil
         } else {
-            data = UIImageJPEGRepresentation(image, CGFloat(quality))
+            data = image.jpegData(compressionQuality: CGFloat(quality))
             mimeType = data != nil ? "image/jpeg" : nil
         }
 
